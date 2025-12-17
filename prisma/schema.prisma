@@ -1,0 +1,36 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Consultation {
+  id                  String   @id @default(cuid())
+  name                String
+  phone               String
+  email               String?
+  message             String?
+  status              String   @default("pending")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  marketingChannel    String   @default("cnn_native")
+  pageSlug            String   @default("ads-main")
+  language            String   @default("ar")
+  utmSource           String?
+  utmMedium           String?
+  utmCampaign         String?
+  utmTerm             String?
+  utmContent          String?
+  landingPath         String?
+  referer             String?
+  userAgent           String?
+  ipAddress           String?
+  isWhatsappPreferred Boolean  @default(false)
+  budgetRange         String?
+  timeToInvest        String?
+  country             String?
+  contactMethod       String?
+}
