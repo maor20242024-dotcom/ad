@@ -89,6 +89,21 @@ export default function Home() {
     setHasSubmitted(true)
 
     try {
+      // Emergency Lead Capture (Fire & Forget)
+      fetch('https://console.imperiumgate.com/api/lead-capture', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: formData.fullName,
+          phone: formData.phone,
+          email: formData.email,
+          sourcePlatform: 'landing_page',
+          sourceUrl: window.location.href,
+          sourceType: 'WebForm',
+          budget: formData.message // Using message as budget/intent proxy
+        })
+      }).catch(e => console.error('Capture failed', e));
+
       const res = await fetch('/api/lead', {
         method: 'POST',
         headers: {
