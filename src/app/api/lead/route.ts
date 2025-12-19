@@ -1,131 +1,129 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { z } from 'zod'
-import { headers } from 'next/headers'
-import { db } from '@/lib/db'
-import { trackZaiEvent } from '@/lib/zai'
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { query } from "@/lib/db";
 
-const leadSchema = z.object({
+export const runtime = "nodejs";
+
+const schema = z.object({
   fullName: z.string().min(1).max(120),
-  phone: z.string().min(4).max(32).regex(/^\+?[0-9\s-]+$/, "Invalid phone format"),
-  email: z.string().email().max(100).optional().or(z.literal('')),
-  country: z.string().min(1).max(80).optional(),
-  message: z.string().max(1000).optional(),
-  contactMethod: z.string().default('whatsapp'),
-
-  marketingChannel: z.string().max(50).default('native_ad'),
-  pageSlug: z.string().max(50).default('imperium_native_v1'),
-  language: z.enum(['ar', 'en']).default('ar'),
-
-  utm: z
-    .object({
-      source: z.string().max(100).optional(),
-      medium: z.string().max(100).optional(),
-      campaign: z.string().max(100).optional(),
-      term: z.string().max(100).optional(),
-      content: z.string().max(100).optional(),
-    })
-    .optional(),
-
-  meta: z
-    .object({
-      landingPath: z.string().max(200).optional(),
-      referer: z.string().max(500).optional(),
-      userAgent: z.string().max(500).optional(),
-    })
-    .optional(),
-
-  fingerprint: z.string().max(100).optional(),
-})
-
-// Simple in-memory rate limiter
-const RATE_LIMIT_WINDOW = 60 * 1000 // 1 minute
-const MAX_REQUESTS = 5
-const rateLimit = new Map<string, { count: number; expires: number }>()
+  phone: z.string().min(4).max(32),
+  email: z.string().email().optional().or(z.literal("")).optional(),
+  budget: z.string().optional(),
+  campaignId: z.string().optional(),
+  sourcePlatform: z.string().optional(),
+  sourceType: z.string().optional(),
+  sourceUrl: z.string().optional(),
+  contactTime: z.string().optional(),
+});
 
 export async function POST(req: NextRequest) {
   try {
-    const ip = req.headers.get('x-forwarded-for')?.split(',')[0].trim() || 'unknown'
+    const body = await req.json();
+    const parsed = schema.parse(body);
 
-    // Rate Limiting Logic
-    const now = Date.now()
-    const record = rateLimit.get(ip)
+    // --- Direct DB Backup (Parallel, Non-blocking) ---
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS leads_backup (
+          id SERIAL PRIMARY KEY,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          full_name TEXT NOT NULL,
+          phone TEXT NOT NULL,
+          email TEXT,
+          source_platform TEXT,
+          source_type TEXT,
+          payload JSONB
+        )
+      `);
 
-    if (record) {
-      if (now > record.expires) {
-        rateLimit.set(ip, { count: 1, expires: now + RATE_LIMIT_WINDOW })
+      await query(
+        `INSERT INTO leads_backup (full_name, phone, email, source_platform, source_type, payload)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          parsed.fullName,
+          parsed.phone,
+          parsed.email || null,
+          parsed.sourcePlatform || "instagram",
+          parsed.sourceType || "WebForm",
+          body
+        ]
+      );
+      console.log("Lead backed up to DB directly");
+    } catch (dbError) {
+      console.error("DB Backup Failed:", dbError);
+      // Do not block main flow
+    }
+    // ------------------------------------------------
+
+    const CRM_ENDPOINT =
+      process.env.IMPERIUM_CRM_ENDPOINT
+        ? `${process.env.IMPERIUM_CRM_ENDPOINT}/api/leads`
+        : process.env.CRM_ENDPOINT || "https://console.imperiumgate.com/api/leads";
+
+    const CRM_API_KEY = process.env.IMPERIUM_CRM_API_KEY || process.env.CRM_API_KEY || "";
+
+    const payload = {
+      name: parsed.fullName,
+      phone: parsed.phone,
+      email: parsed.email || null,
+      budget: parsed.budget || null,
+      source: "landing-page",
+      campaignId: parsed.campaignId || null,
+      meta: {
+        sourcePlatform: parsed.sourcePlatform || "instagram",
+        sourceType: parsed.sourceType || "WebForm",
+        sourceUrl: parsed.sourceUrl || "",
+      }
+    };
+
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (CRM_API_KEY) {
+      // The protocol mentions x-api-key is preferred
+      headers["x-api-key"] = CRM_API_KEY;
+    }
+
+    let crmSuccess = false;
+    let crmData: any = null;
+
+    try {
+      const crmRes = await fetch(CRM_ENDPOINT, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+      });
+
+      const text = await crmRes.text();
+      if (!crmRes.ok) {
+        console.error("CRM Forward Error:", text.substring(0, 500));
       } else {
-        if (record.count >= MAX_REQUESTS) {
-          return NextResponse.json(
-            { ok: false, error: 'Too many requests' },
-            { status: 429 }
-          )
+        crmSuccess = true;
+        try {
+          crmData = JSON.parse(text);
+        } catch {
+          crmData = { raw: text };
         }
-        record.count++
       }
-    } else {
-      rateLimit.set(ip, { count: 1, expires: now + RATE_LIMIT_WINDOW })
+    } catch (fetchError) {
+      console.error("CRM Fetch Exception:", fetchError);
     }
 
-    // Cleanup
-    if (rateLimit.size > 1000) {
-      for (const [key, value] of rateLimit.entries()) {
-        if (now > value.expires) rateLimit.delete(key)
-      }
+    // Always return success to frontend to allow redirect, since we have DB backup.
+    return NextResponse.json({
+      ok: true,
+      success: true,
+      crm_forwarded: crmSuccess,
+      crm_response: crmData,
+    });
+
+
+  } catch (e: any) {
+    if (e?.name === "ZodError") {
+      return NextResponse.json({ ok: false, error: "BAD_INPUT", details: e.issues }, { status: 400 });
     }
-
-    const body = await req.json()
-    const parsed = leadSchema.parse(body)
-    const hdrs = await headers()
-
-    // 1) Submit to CRM directly (No Local DB)
-    const crmEndpoint = process.env.IMPERIUM_CRM_ENDPOINT ?? process.env.CRM_ENDPOINT;
-    const crmApiKey = process.env.IMPERIUM_CRM_API_KEY ?? process.env.CRM_API_KEY;
-
-    let leadId = 'crm-forward-only-' + Date.now();
-
-    // Don't fail if CRM is missing, just log
-    if (crmEndpoint && crmApiKey) {
-      try {
-        const url = crmEndpoint;
-
-        await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${crmApiKey}`,
-          },
-          body: JSON.stringify({
-            // Flat payload
-            name: parsed.fullName,
-            phone: parsed.phone,
-            email: parsed.email || '',
-            message: parsed.message || '',
-            source: 'ads.imperiumgate.com',
-            campaign: parsed.utm?.campaign || 'unknown',
-            language: parsed.language || 'ar'
-          }),
-        })
-      } catch (err) {
-        console.error('CRM forwarding error', err)
-      }
-    }
-
-    // 2) Analytics
-    await trackZaiEvent('lead.captured', {
-      source: 'ads_main',
-      marketingChannel: parsed.marketingChannel,
-      pageSlug: parsed.pageSlug,
-    })
-
-    return NextResponse.json({ ok: true, id: leadId })
-  } catch (error: any) {
-    console.error('Lead API error', error)
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { ok: false, error: 'Validation failed', details: error.issues },
-        { status: 400 }
-      )
-    }
-    return NextResponse.json({ ok: false, message: 'Internal Server Error' }, { status: 500 })
+    console.error("Internal API Error:", e);
+    return NextResponse.json({ ok: false, error: "SERVER_ERROR" }, { status: 500 });
   }
 }

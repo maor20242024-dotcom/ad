@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import Image from 'next/image'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -9,75 +9,27 @@ import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from 'sonner'
-import { Phone, Mail, MapPin, CheckCircle, Building2, FileText, Shield, Users, ArrowRight, Star } from 'lucide-react'
+import { Phone, Mail, MapPin, CheckCircle, Building2, FileText, Shield, ArrowRight } from 'lucide-react'
+import { LEAD_ENDPOINT, API_KEY, DEFAULT_SOURCE } from '@/config/leadCapture'
 
 export default function Home() {
-  // Client-side only state
   const [formData, setFormData] = useState({
     fullName: '',
     phone: '',
     country: '',
     email: '',
     message: '',
-    contactMethod: 'whatsapp'
+    contactMethod: 'whatsapp',
+    contactTime: ''
   })
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [hasSubmitted, setHasSubmitted] = useState(false)
-
-  // Capture UTM and tracking data
-  const [trackingData, setTrackingData] = useState({
-    utmSource: '',
-    utmMedium: '',
-    utmCampaign: '',
-    utmTerm: '',
-    utmContent: '',
-    landingPath: '',
-    referer: '',
-    userAgent: '',
-  })
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-
-    const url = new URL(window.location.href)
-    const params = url.searchParams
-
-    setTrackingData({
-      utmSource: params.get('utm_source') ?? '',
-      utmMedium: params.get('utm_medium') ?? '',
-      utmCampaign: params.get('utm_campaign') ?? '',
-      utmTerm: params.get('utm_term') ?? '',
-      utmContent: params.get('utm_content') ?? '',
-      landingPath: url.pathname + url.search,
-      referer: document.referrer,
-      userAgent: navigator.userAgent,
-    })
-
-    // تتبع تحميل الصفحة مع بيانات إضافية - فقط على صفحة الهبوط
-    if ((window as any).spix && url.pathname === '/') {
-      ; (window as any).spix("event", "pageload", {
-        page: "landing_page",
-        utm_source: params.get('utm_source') ?? '',
-        utm_medium: params.get('utm_medium') ?? '',
-        utm_campaign: params.get('utm_campaign') ?? '',
-        timestamp: new Date().toISOString()
-      })
-    }
-  }, [])
 
   const handleChange = (
     field: keyof typeof formData,
     value: string
   ) => {
     setFormData((prev) => ({ ...prev, [field]: value }))
-  }
-
-  const trackButtonClick = (buttonName: string) => {
-    if (typeof window !== 'undefined' && (window as any).spix) {
-      (window as any).spix('event', 'click', {
-        button_name: buttonName
-      })
-    }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -89,91 +41,22 @@ export default function Home() {
     setHasSubmitted(true)
 
     try {
-      // Emergency Lead Capture (Fire & Forget)
-      fetch('https://console.imperiumgate.com/api/lead-capture', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: formData.fullName,
-          phone: formData.phone,
-          email: formData.email,
-          sourcePlatform: 'landing_page',
-          sourceUrl: window.location.href,
-          sourceType: 'WebForm',
-          budget: formData.message // Using message as budget/intent proxy
-        })
-      }).catch(e => console.error('Capture failed', e));
-
-      const res = await fetch('/api/lead', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          ...formData,
-          marketingChannel: 'native_ad',
-          pageSlug: 'imperium_native_v1',
-          language: 'ar',
-          ...trackingData,
-        }),
+      // Submit to lead API
+      await submitLead({
+        name: formData.fullName,
+        phone: formData.phone,
+        email: formData.email,
+        country: formData.country,
+        message: formData.message,
+        contactMethod: formData.contactMethod,
+        contactTime: formData.contactTime
       })
 
-      if (res.ok) {
-        toast.success('تم استلام طلبك بنجاح! سنتواصل معك خلال 24 ساعة.')
-        setFormData({ fullName: '', phone: '', country: '', email: '', message: '', contactMethod: 'whatsapp' })
+      toast.success('تم استلام طلبك بنجاح! سنتواصل معك خلال 24 ساعة.')
+      setFormData({ fullName: '', phone: '', country: '', email: '', message: '', contactMethod: 'whatsapp', contactTime: '' })
 
-        // تتبع التحويلات المتقدم
-        try {
-          if (typeof window !== 'undefined') {
-            // Native Ads tracking مع بيانات شاملة
-            if ((window as any).spix) {
-              ; (window as any).spix('event', 'lead', {
-                event_category: 'form_submission',
-                event_label: 'main_form',
-                form_name: 'main_lead_form',
-                user_agent: navigator.userAgent,
-                timestamp: new Date().toISOString(),
-                value: 1
-              })
-
-                ; (window as any).spix('event', 'conversion', {
-                  conversion_type: 'lead_generation',
-                  conversion_value: 1,
-                  currency: 'AED',
-                  page: 'landing_page'
-                })
-            }
-
-            // Facebook Pixel tracking
-            if ((window as any).fbq) {
-              ; (window as any).fbq('track', 'Lead', {
-                content_name: 'Real Estate Consultation',
-                content_category: 'Lead Generation',
-                value: 1,
-                currency: 'AED'
-              })
-            }
-
-            // Google Analytics tracking
-            if ((window as any).gtag) {
-              ; (window as any).gtag('event', 'lead', {
-                event_category: 'form_submission',
-                event_label: 'imperiumgate_native',
-                value: 1,
-                currency: 'AED'
-              })
-            }
-          }
-        } catch (trkErr) {
-          console.error('Tracking error:', trkErr)
-        }
-
-        // Auto redirect to thank you page
-        setTimeout(() => {
-          // Fallback to window.location if router is not available (though we will add it)
-          window.location.href = '/thank-you'
-        }, 1500)
-      }
+      // Go to thank you page
+      window.location.href = '/thank-you'
     } catch (error) {
       toast.error('حدث خطأ ما. يرجى المحاولة مرة أخرى.')
       setHasSubmitted(false)
@@ -181,6 +64,38 @@ export default function Home() {
       setIsSubmitting(false)
     }
   }
+
+  async function submitLead(form: { name: string; phone: string; email?: string; country?: string; message?: string; contactMethod?: string; contactTime?: string }) {
+    // Get campaignId from URL if available
+    const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+    const campaignId = urlParams?.get('campaignId') || urlParams?.get('utm_campaign') || '';
+
+    const payload = {
+      fullName: form.name,
+      phone: form.phone,
+      email: form.email || "",
+      budget: form.message || "", // Use message as budget or general info
+      campaignId: campaignId,
+      sourcePlatform: urlParams?.get('utm_source') || "instagram",
+      sourceType: "WebForm",
+      sourceUrl: typeof window !== "undefined" ? window.location.href : "",
+      contactTime: form.contactTime || "",
+    };
+
+    const res = await fetch("/api/lead", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+
+    if (!res.ok || !data?.success) {
+      throw new Error(data?.details || "Submit failed");
+    }
+
+    return data;
+  }
+
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--deep-navy)' }} dir="rtl">
@@ -273,7 +188,6 @@ export default function Home() {
               <a href="#contact" className="text-gray-300 hover:text-[var(--soft-gold)] transition">تواصل معنا</a>
               <Button
                 className="bg-[var(--gold)] text-black hover:bg-[#caa449] px-6"
-                onClick={() => trackButtonClick('header_consultation')}
               >
                 استشارة مجانية
               </Button>
@@ -343,20 +257,34 @@ export default function Home() {
                   <div>
                     <Label htmlFor="country" className="block text-sm text-gray-300 mb-2">البلد *</Label>
                     <Select value={formData.country} onValueChange={(value) => setFormData({ ...formData, country: value })}>
-                      <SelectTrigger className="w-full rounded-xl bg-white/5 border-white/10 px-4 py-3 focus:outline-none focus:border-[var(--gold)] text-white">
+                      <SelectTrigger className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 focus:outline-none focus:border-[var(--gold)] text-white shadow-none">
                         <SelectValue placeholder="اختر بلدك" />
                       </SelectTrigger>
-                      <SelectContent className="bg-gray-900 border border-gray-700">
-                        <SelectItem value="الإمارات">الإمارات العربية المتحدة</SelectItem>
-                        <SelectItem value="السعودية">المملكة العربية السعودية</SelectItem>
-                        <SelectItem value="قطر">قطر</SelectItem>
-                        <SelectItem value="الكويت">الكويت</SelectItem>
-                        <SelectItem value="البحرين">البحرين</SelectItem>
-                        <SelectItem value="سلطنة عمان">سلطنة عمان</SelectItem>
-                        <SelectItem value="الأردن">الأردن</SelectItem>
-                        <SelectItem value="مصر">مصر</SelectItem>
-                        <SelectItem value="فلسطين">فلسطين</SelectItem>
-                        <SelectItem value="أخرى">أخرى</SelectItem>
+                      <SelectContent className="bg-gray-900 border border-gray-700 text-white">
+                        <SelectItem value="الإمارات" className="focus:bg-white/10 focus:text-white cursor-pointer hover:bg-white/5">الإمارات العربية المتحدة</SelectItem>
+                        <SelectItem value="السعودية" className="focus:bg-white/10 focus:text-white cursor-pointer hover:bg-white/5">المملكة العربية السعودية</SelectItem>
+                        <SelectItem value="قطر" className="focus:bg-white/10 focus:text-white cursor-pointer hover:bg-white/5">قطر</SelectItem>
+                        <SelectItem value="الكويت" className="focus:bg-white/10 focus:text-white cursor-pointer hover:bg-white/5">الكويت</SelectItem>
+                        <SelectItem value="البحرين" className="focus:bg-white/10 focus:text-white cursor-pointer hover:bg-white/5">البحرين</SelectItem>
+                        <SelectItem value="سلطنة عمان" className="focus:bg-white/10 focus:text-white cursor-pointer hover:bg-white/5">سلطنة عمان</SelectItem>
+                        <SelectItem value="الأردن" className="focus:bg-white/10 focus:text-white cursor-pointer hover:bg-white/5">الأردن</SelectItem>
+                        <SelectItem value="مصر" className="focus:bg-white/10 focus:text-white cursor-pointer hover:bg-white/5">مصر</SelectItem>
+                        <SelectItem value="فلسطين" className="focus:bg-white/10 focus:text-white cursor-pointer hover:bg-white/5">فلسطين</SelectItem>
+                        <SelectItem value="أخرى" className="focus:bg-white/10 focus:text-white cursor-pointer hover:bg-white/5">أخرى</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div>
+                    <Label htmlFor="contactTime" className="block text-sm text-gray-300 mb-2">موعد التواصل المفضل *</Label>
+                    <Select value={formData.contactTime} onValueChange={(value) => setFormData({ ...formData, contactTime: value })}>
+                      <SelectTrigger className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 focus:outline-none focus:border-[var(--gold)] text-white shadow-none">
+                        <SelectValue placeholder="اختر الموعد المفضل" />
+                      </SelectTrigger>
+                      <SelectContent className="bg-gray-900 border border-gray-700 text-white">
+                        <SelectItem value="morning" className="focus:bg-white/10 focus:text-white cursor-pointer hover:bg-white/5">الصباح (9ص - 12م)</SelectItem>
+                        <SelectItem value="afternoon" className="focus:bg-white/10 focus:text-white cursor-pointer hover:bg-white/5">الظهيرة (12م - 4م)</SelectItem>
+                        <SelectItem value="evening" className="focus:bg-white/10 focus:text-white cursor-pointer hover:bg-white/5">المساء (4م - 9م)</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -371,10 +299,10 @@ export default function Home() {
                       <SelectTrigger className="w-full rounded-xl bg-white/5 border-white/10 px-4 py-3 focus:outline-none focus:border-[var(--gold)] text-white">
                         <SelectValue placeholder="اختر طريقة التواصل" />
                       </SelectTrigger>
-                      <SelectContent className="bg-gray-900 border border-gray-700">
-                        <SelectItem value="whatsapp">واتساب (موصى به)</SelectItem>
-                        <SelectItem value="facetime">فيس تايم</SelectItem>
-                        <SelectItem value="phone">مكالمة هاتفية</SelectItem>
+                      <SelectContent className="bg-gray-900 border border-gray-700 text-white">
+                        <SelectItem value="whatsapp" className="focus:bg-white/10 focus:text-white cursor-pointer hover:bg-white/5">واتساب (موصى به)</SelectItem>
+                        <SelectItem value="facetime" className="focus:bg-white/10 focus:text-white cursor-pointer hover:bg-white/5">فيس تايم</SelectItem>
+                        <SelectItem value="phone" className="focus:bg-white/10 focus:text-white cursor-pointer hover:bg-white/5">مكالمة هاتفية</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -387,7 +315,7 @@ export default function Home() {
                       rows={3}
                       required
                       value={formData.message}
-                      onChange={(e) => setFormData({ ...formData, message: e.target.value })}
+                      onChange={(e) => handleChange('message', e.target.value)}
                       className="w-full rounded-xl bg-white/5 border-white/10 px-4 py-3 focus:outline-none focus:border-[var(--gold)] text-white placeholder:text-gray-400 resize-none"
                       placeholder="أخبرنا عن ميزانيتك ونوع العقار الذي تبحث عنه..."
                     />
@@ -398,7 +326,7 @@ export default function Home() {
                     className="w-full bg-[var(--gold)] text-black hover:bg-[#caa449] py-4 text-lg font-semibold rounded-xl"
                     disabled={isSubmitting}
                   >
-                    {isSubmitting ? 'جاري تحميل بياناتك' : 'أرسل طلب الاستشارة المجانية'}
+                    {isSubmitting ? 'جاري تأمين بياناتك...' : 'أرسل طلب الاستشارة المجانية'}
                   </Button>
                 </form>
 
@@ -495,7 +423,7 @@ export default function Home() {
               </div>
 
               <div className="glass-card card-hover rounded-2xl border-[rgba(212,175,55,0.25)] p-8">
-                <div className="w-16 h-16 rounded-full bg-[rgba(212,175,55,0.15)] border-[rgba(212,175,55,0.3)] flex items-center justify-center mb-6">
+                <div className="w-16 h-16 rounded-full bg-[rgba(212,175,55,0.15)] border border-[rgba(212,175,55,0.3)] flex items-center justify-center mb-6">
                   <Shield className="h-8 w-8 text-[var(--gold)]" />
                 </div>
                 <h3 className="text-xl font-bold text-white mb-4">حماية الاستثمار</h3>
@@ -572,7 +500,7 @@ export default function Home() {
 
             <div className="grid md:grid-cols-3 gap-8">
               <div className="glass-card card-hover rounded-2xl border-[rgba(212,175,55,0.25)] p-8 text-center">
-                <div className="w-16 h-16 rounded-full bg-[rgba(212,175,55,0.15)] border-[rgba(212,175,55,0.3)] flex items-center justify-center mx-auto mb-6">
+                <div className="w-16 h-16 rounded-full bg-[rgba(212,175,55,0.15)] border border-[rgba(212,175,55,0.3)] flex items-center justify-center mx-auto mb-6">
                   <Phone className="h-8 w-8 text-[var(--gold)]" />
                 </div>
                 <h3 className="text-xl font-semibold text-white mb-3">الهاتف</h3>
@@ -581,7 +509,7 @@ export default function Home() {
               </div>
 
               <div className="glass-card card-hover rounded-2xl border-[rgba(212,175,55,0.25)] p-8 text-center">
-                <div className="w-16 h-16 rounded-full bg-[rgba(212,175,55,0.15)] border-[rgba(212,175,55,0.3)] flex items-center justify-center mx-auto mb-6">
+                <div className="w-16 h-16 rounded-full bg-[rgba(212,175,55,0.15)] border border-[rgba(212,175,55,0.3)] flex items-center justify-center mx-auto mb-6">
                   <Mail className="h-8 w-8 text-[var(--gold)]" />
                 </div>
                 <h3 className="text-xl font-semibold text-white mb-3">البريد الإلكتروني</h3>
@@ -590,7 +518,7 @@ export default function Home() {
               </div>
 
               <div className="glass-card card-hover rounded-2xl border-[rgba(212,175,55,0.25)] p-8 text-center">
-                <div className="w-16 h-16 rounded-full bg-[rgba(212,175,55,0.15)] border-[rgba(212,175,55,0.3)] flex items-center justify-center mx-auto mb-6">
+                <div className="w-16 h-16 rounded-full bg-[rgba(212,175,55,0.15)] border border-[rgba(212,175,55,0.3)] flex items-center justify-center mx-auto mb-6">
                   <MapPin className="h-8 w-8 text-[var(--gold)]" />
                 </div>
                 <h3 className="text-xl font-semibold text-white mb-3">المكتب الرئيسي</h3>
@@ -614,8 +542,6 @@ export default function Home() {
               </p>
               <Button
                 onClick={() => {
-                  trackButtonClick('cta_consultation')
-                  if (typeof window === 'undefined') return
                   const formEl = document.querySelector<HTMLFormElement>(
                     'form'
                   )
@@ -680,8 +606,9 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="border-t border-[rgba(212,175,55,0.2)] mt-8 pt-8 text-center text-gray-500">
-            Imperium Gate © {new Date().getFullYear()} – جميع الحقوق محفوظة.
+          <div className="border-t border-[rgba(212,175,55,0.2)] mt-8 pt-8 text-center text-gray-500 text-xs sm:text-sm">
+            <p className="mb-2">Imperium Gate Real Estate L.L.C — Registered in Dubai, United Arab Emirates</p>
+            <p>Imperium Gate © {new Date().getFullYear()} – جميع الحقوق محفوظة.</p>
           </div>
         </div>
       </footer>
