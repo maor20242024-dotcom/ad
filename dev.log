@@ -1,0 +1,13 @@
+   ▲ Next.js 16.0.10 (Turbopack)
+   - Local:         http://localhost:3001
+   - Network:       http://168.192.1.108:3001
+   - Environments: .env.local
+
+ ✓ Starting...
+ ⚠ The "middleware" file convention is deprecated. Please use "proxy" instead. Learn more: https://nextjs.org/docs/messages/middleware-to-proxy
+ ✓ Ready in 958ms
+ GET / 200 in 3.2s (compile: 3.0s, proxy.ts: 126ms, render: 160ms)
+Lead backed up to DB directly
+CRM Forward Error: <!DOCTYPE html><html lang="en" data-astro-cid-nbv56vs3> <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#000"><title>Vercel Security Checkpoint</title><style>.spinner[data-astro-cid-jlpqxutv]{display:flex;flex-direction:column;justify-content:center;align-items:center}.spinner-circle[data-astro-cid-jlpqxutv]{transform-origin:center;animation:spinner-circle-animate 1s step-start infinite}rect[data-astro-cid-jlpqxutv
+ POST /api/lead 200 in 5.1s (compile: 462ms, proxy.ts: 5ms, render: 4.6s)
+ GET /thank-you 200 in 328ms (compile: 291ms, proxy.ts: 3ms, render: 35ms)
