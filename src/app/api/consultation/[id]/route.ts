@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
+import { query } from '@/lib/db'
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params
+    const { id } = await params
     const body = await request.json()
     const { status } = body
 
@@ -17,17 +17,25 @@ export async function PATCH(
       )
     }
 
-    const consultation = await db.consultation.update({
-      where: { id },
-      data: { 
-        status,
-        updatedAt: new Date()
-      },
-    })
+    // تحديث في قاعدة البيانات المحلية
+    const result = await query(
+      `UPDATE leads_backup 
+       SET payload = jsonb_set(payload, '{status}', $1::jsonb)
+       WHERE id = $2
+       RETURNING *`,
+      [JSON.stringify(status), id]
+    )
+
+    if (result.rows.length === 0) {
+      return NextResponse.json(
+        { error: 'Consultation not found' },
+        { status: 404 }
+      )
+    }
 
     return NextResponse.json({
       success: true,
-      consultation,
+      consultation: result.rows[0],
     })
 
   } catch (error) {
