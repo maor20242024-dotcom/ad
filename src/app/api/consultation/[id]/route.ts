@@ -21,7 +21,7 @@ export async function PATCH(
     const result = await query(
       `UPDATE leads_backup 
        SET payload = jsonb_set(payload, '{status}', $1::jsonb)
-       WHERE id = $2
+       WHERE id = $2::integer
        RETURNING *`,
       [JSON.stringify(status), id]
     )
