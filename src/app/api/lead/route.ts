@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { query } from "@/lib/db";
 
 export const runtime = "nodejs";
 
@@ -21,44 +20,16 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const parsed = schema.parse(body);
 
-    // --- Direct DB Backup (Parallel, Non-blocking) ---
-    try {
-      await query(`
-        CREATE TABLE IF NOT EXISTS leads_backup (
-          id SERIAL PRIMARY KEY,
-          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-          full_name TEXT NOT NULL,
-          phone TEXT NOT NULL,
-          email TEXT,
-          source_platform TEXT,
-          source_type TEXT,
-          payload JSONB
-        )
-      `);
+    // --- Zeta Ingest Protocol: Logging incoming data ---
+    console.log("-----------------------------------------");
+    console.log("🚀 [ZETA_INGEST] New Lead Received:");
+    console.log(JSON.stringify(body, null, 2));
+    console.log("-----------------------------------------");
 
-      await query(
-        `INSERT INTO leads_backup (full_name, phone, email, source_platform, source_type, payload)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [
-          parsed.fullName,
-          parsed.phone,
-          parsed.email || null,
-          parsed.sourcePlatform || "instagram",
-          parsed.sourceType || "WebForm",
-          body
-        ]
-      );
-      console.log("Lead backed up to DB directly");
-    } catch (dbError) {
-      console.error("DB Backup Failed:", dbError);
-      // Do not block main flow
-    }
-    // ------------------------------------------------
-
-    const CRM_ENDPOINT =
-      process.env.IMPERIUM_CRM_ENDPOINT
-        ? `${process.env.IMPERIUM_CRM_ENDPOINT}/api/leads`
-        : process.env.CRM_ENDPOINT || "https://console.imperiumgate.com/api/leads";
+    const baseCrmEndpoint = process.env.IMPERIUM_CRM_ENDPOINT || process.env.CRM_ENDPOINT || "https://console.imperiumgate.com/api";
+    const CRM_ENDPOINT = baseCrmEndpoint.endsWith("/api")
+      ? `${baseCrmEndpoint}/leads`
+      : `${baseCrmEndpoint}/api/leads`;
 
     const CRM_API_KEY = process.env.IMPERIUM_CRM_API_KEY || process.env.CRM_API_KEY || "";
 
@@ -76,12 +47,13 @@ export async function POST(req: NextRequest) {
       }
     };
 
+    console.log("📡 [ZETA_INGEST] Forwarding to CRM:", CRM_ENDPOINT);
+    console.log("📦 [ZETA_INGEST] CRM Payload:", JSON.stringify(payload, null, 2));
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
     if (CRM_API_KEY) {
-      // The protocol mentions x-api-key is preferred
       headers["x-api-key"] = CRM_API_KEY;
     }
 
@@ -97,9 +69,10 @@ export async function POST(req: NextRequest) {
 
       const text = await crmRes.text();
       if (!crmRes.ok) {
-        console.error("CRM Forward Error:", text.substring(0, 500));
+        console.error("❌ [ZETA_INGEST] CRM Forward Error:", text.substring(0, 500));
       } else {
         crmSuccess = true;
+        console.log("✅ [ZETA_INGEST] CRM Forward Success");
         try {
           crmData = JSON.parse(text);
         } catch {
@@ -107,17 +80,16 @@ export async function POST(req: NextRequest) {
         }
       }
     } catch (fetchError) {
-      console.error("CRM Fetch Exception:", fetchError);
+      console.error("💥 [ZETA_INGEST] CRM Fetch Exception:", fetchError);
     }
 
-    // Always return success to frontend to allow redirect, since we have DB backup.
+    // Always return success to allow redirect as per Zeta laws
     return NextResponse.json({
       ok: true,
       success: true,
       crm_forwarded: crmSuccess,
       crm_response: crmData,
     });
-
 
   } catch (e: any) {
     if (e?.name === "ZodError") {
