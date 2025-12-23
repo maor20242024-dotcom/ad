@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { headers } from 'next/headers'
-import { db } from '@/lib/db'
+import { query } from '@/lib/db'
 import { z } from 'zod'
 import { trackZaiEvent } from '@/lib/zai'
 
@@ -81,8 +81,42 @@ export async function POST(req: NextRequest) {
       landingPath: raw.landingPath ?? req.nextUrl.pathname + req.nextUrl.search,
     })
 
-    // 1) Direct to CRM (No Local DB)
-    const consultationId = 'cons-' + Date.now();
+    // حفظ في قاعدة البيانات
+    let consultationId = 'cons-' + Date.now();
+    
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS leads_backup (
+          id SERIAL PRIMARY KEY,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          full_name TEXT NOT NULL,
+          phone TEXT NOT NULL,
+          email TEXT,
+          source_platform TEXT,
+          source_type TEXT,
+          payload JSONB
+        )
+      `);
+
+      const dbResult = await query(
+        `INSERT INTO leads_backup (full_name, phone, email, source_platform, source_type, payload)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING id`,
+        [
+          parsed.name,
+          parsed.phone,
+          parsed.email || null,
+          parsed.marketingChannel || 'landing-page',
+          'ConsultationForm',
+          JSON.stringify(parsed)
+        ]
+      );
+      
+      consultationId = dbResult.rows[0]?.id || consultationId;
+    } catch (dbError) {
+      console.error('Database save error:', dbError);
+      // Continue with consultation processing even if DB fails
+    }
 
     // 2) إرسال لـ CRM الرئيسي (Refactored to match lead route logic roughly, but using the forwardToCrm helper)
     // We construct a fake consultation object to pass to forwardToCrm since it expects one
